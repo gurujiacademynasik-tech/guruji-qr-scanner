@@ -1,1 +1,319 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Guruji Academy - QR Scanner</title>
+
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #f1f4f9;
+      color: #222;
+      text-align: center;
+    }
+
+    .container {
+      max-width: 480px;
+      margin: 15px auto;
+      padding: 22px;
+      background: #fff;
+      border-radius: 15px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.10);
+    }
+
+    h2 {
+      margin: 5px 0;
+      color: #173b70;
+    }
+
+    .subtitle {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+
+    #reader {
+      width: 100%;
+      overflow: hidden;
+      border-radius: 10px;
+    }
+
+    #status {
+      margin: 18px 0;
+      padding: 12px;
+      border-radius: 8px;
+      background: #eef3fb;
+      color: #234;
+      font-size: 14px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    #status.error {
+      background: #ffe9e9;
+      color: #b00020;
+    }
+
+    #status.success {
+      background: #e5f7e9;
+      color: #176b2c;
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 8px;
+      background: #173b70;
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .note {
+      margin-top: 18px;
+      font-size: 12px;
+      color: #777;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="container">
+
+    <h2>Guruji Academy</h2>
+    <div class="subtitle">Attendance QR Code Scanner</div>
+
+    <div id="reader"></div>
+
+    <div id="status">
+      Starting camera... Please allow camera permission.
+    </div>
+
+    <button id="retryBtn" onclick="startCamera()" style="display:none;">
+      Retry Camera
+    </button>
+
+    <button onclick="closeScanner()">
+      Cancel / Close Scanner
+    </button>
+
+    <div class="note">
+      Please keep the QR code inside the scanning box.<br>
+      Use the rear camera of your mobile phone.
+    </div>
+
+  </div>
+
+  <script>
+    let scanner = null;
+    let isScanning = false;
+    let scanCompleted = false;
+
+    const params = new URLSearchParams(window.location.search);
+    const nonce = params.get("nonce");
+
+    const statusBox = document.getElementById("status");
+    const retryBtn = document.getElementById("retryBtn");
+
+    function showStatus(message, type) {
+      statusBox.textContent = message;
+      statusBox.className = type || "";
+    }
+
+    async function startCamera() {
+
+      if (isScanning || scanCompleted) return;
+
+      if (!nonce) {
+        showStatus(
+          "Invalid scanner link. Return to the attendance page and try again.",
+          "error"
+        );
+        return;
+      }
+
+      if (!window.isSecureContext) {
+        showStatus(
+          "Camera requires a secure HTTPS connection.",
+          "error"
+        );
+        retryBtn.style.display = "block";
+        return;
+      }
+
+      if (!navigator.mediaDevices ||
+          !navigator.mediaDevices.getUserMedia) {
+        showStatus(
+          "Camera is not supported. Please open this page in Google Chrome.",
+          "error"
+        );
+        retryBtn.style.display = "block";
+        return;
+      }
+
+      retryBtn.style.display = "none";
+      showStatus("Requesting camera permission...", "");
+
+      try {
+
+        if (!scanner) {
+          scanner = new Html5Qrcode("reader");
+        }
+
+        isScanning = true;
+
+        await scanner.start(
+          { facingMode: "environment" },
+          {
+            fps: 10,
+            qrbox: function(viewWidth, viewHeight) {
+              const size = Math.floor(
+                Math.min(viewWidth, viewHeight) * 0.70
+              );
+
+              return {
+                width: Math.min(size, 260),
+                height: Math.min(size, 260)
+              };
+            },
+            aspectRatio: 1
+          },
+
+          function(decodedText) {
+            if (scanCompleted) return;
+
+            scanCompleted = true;
+
+            showStatus(
+              "QR scanned! Sending attendance details...",
+              "success"
+            );
+
+            sendScannedQR(decodedText);
+          },
+
+          function() {
+            // Normal QR scanning miss.
+          }
+        );
+
+        showStatus(
+          "Camera is active. Point your camera at the attendance QR code.",
+          ""
+        );
+
+      } catch (error) {
+
+        isScanning = false;
+
+        let message = "Camera could not start.";
+
+        if (error && error.name === "NotAllowedError") {
+          message = "Camera permission denied. Allow camera access in Chrome settings.";
+        } else if (error && error.name === "NotFoundError") {
+          message = "No camera found on this device.";
+        } else if (error && error.name === "NotReadableError") {
+          message = "Camera is being used by another application. Close other camera apps and retry.";
+        } else if (error && error.message) {
+          message += " " + error.message;
+        }
+
+        showStatus(message, "error");
+        retryBtn.style.display = "block";
+      }
+    }
+
+    async function sendScannedQR(qrToken) {
+
+      try {
+        if (scanner && isScanning) {
+          await scanner.stop();
+          await scanner.clear();
+        }
+      } catch (error) {
+        // Continue sending the QR token.
+      }
+
+      isScanning = false;
+
+      if (!window.opener || window.opener.closed) {
+        showStatus(
+          "Attendance page is no longer open. Return to the attendance page and try again.",
+          "error"
+        );
+        return;
+      }
+
+      window.opener.postMessage(
+        {
+          type: "GURUJI_QR_SCAN",
+          nonce: nonce,
+          qrToken: String(qrToken)
+        },
+        "*"
+      );
+
+      showStatus(
+        "QR sent successfully. Returning to attendance page...",
+        "success"
+      );
+
+      setTimeout(function() {
+        window.close();
+      }, 1200);
+    }
+
+    async function closeScanner() {
+
+      try {
+        if (scanner && isScanning) {
+          await scanner.stop();
+          await scanner.clear();
+        }
+      } catch (error) {
+        // Ignore camera shutdown errors.
+      }
+
+      isScanning = false;
+      window.close();
+
+      showStatus(
+        "You can close this tab and return to the attendance page.",
+        ""
+      );
+    }
+
+    window.addEventListener("load", function() {
+      startCamera();
+    });
+
+    window.addEventListener("beforeunload", function() {
+      if (scanner && isScanning) {
+        scanner.stop().catch(function() {});
+      }
+    });
+  </script>
+
+</body>
+</html>
+
